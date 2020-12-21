@@ -1,6 +1,6 @@
 {
   "name": "guillotine-solver",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "A cutting stock solver with the guillotine restriction.",
   "main": "index.js",
   "scripts": {
