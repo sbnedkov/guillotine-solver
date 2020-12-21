@@ -27,8 +27,9 @@
     "gulp": "^4.0.2",
     "gulp-babel": "^6.1.1",
     "gulp-mocha": "^7.0.2",
-    "gulp-sourcemaps": "^1.6.0",
-    "matrix-inverse": "^0.1.0"
+    "gulp-sourcemaps": "^3.0.0",
+    "matrix-inverse": "^0.1.0",
+    "minimist": "^1.2.5"
   },
   "directories": {
     "test": "test"
