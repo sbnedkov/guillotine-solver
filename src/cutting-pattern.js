@@ -1,99 +1,101 @@
 import {createReverseMap} from './utils';
 
 export default class CuttingPattern {
-    constructor (a, b, itemsw, itemsh) {
-        this.pattern = a.map((a, idx) => a * b[idx]);
+    constructor (a, b, itemsw, itemsh, cuttingUtils, W, L) {
+        this.nonNull = false;
+        this.pattern = a.map((_, idx) => {
+            if (b[idx] === 0 || a[idx] === 0) {
+                a[idx] = 0;
+                b[idx] = 0;
+            }
+
+            var res = a[idx] * b[idx];
+            if (res !== 0) {
+                this.nonNull = true;
+            }
+            return res;
+        });
+
         this.constituentsx = [a.slice(0)];
         this.constituentsy = [b.slice(0)];
         this.patternIsRotated = [false];
 
-        this.locations = [this.cuttingLocation(a, b, itemsw, itemsh)];
+        var loc = cuttingUtils.cuttingLocation(a, b, itemsw, itemsh);
+        this.locations = [loc];
+
+        this.W = W;
+        this.L = L;
     }
 
-    add (A, B, k, a, itemsw, itemsh) {
-        // Location
-        let quot = a.reduce((acc, curr, idx) => acc + curr * itemsh[idx], 0);
-        let sum = 0;
-        for (let z = 0; z <= k; z++) {
-            sum += A[z] * itemsw[z];
-        }
-        let x1 = quot + sum - A[k] * itemsw[k];
-        let y1 = 0;
-        let x2 = quot + sum;
-        let y2 = B[k] * itemsh[k];
+    addn (A, B, i, x, y, w, h, rotated) { // Here A and B could be swapped
+        let x1 = x;
+        let x2 = x1 + A * (rotated ? h : w);
+        let y1 = y;
+        let y2 = y1 + B * (rotated ? w : h);
 
-        this.locations.push([{x1, y1, x2, y2}]);
+        this.locations.push(this.pattern.map((_, idx) => idx === i ? {x1, y1, x2, y2} : null));
 
-        this.constituentsx.push(A);
-        this.constituentsy.push(B);
+        this.constituentsx.push(this.pattern.map((_, idx) => idx === i ? A : 0));
+        this.constituentsy.push(this.pattern.map((_, idx) => idx === i ? B : 0));
 
-        for (let i = 0; i < this.pattern.length; i++) {
-            this.pattern[i] += A[i] * B[i];
-        }
+        this.pattern[i] += A * B;
 
-        this.patternIsRotated.push(false);
+        this.patternIsRotated.push(!!rotated);
+
+        this.nonNull = true;
     }
 
-    addv (A, B, z, i, b, ks, itemsw, itemsh, W) {
-        // Location
-        let sum = 0;
-        for (let zz = 0; zz <= z; zz++) {
-            sum += A[zz] * itemsh[zz];
-        }
-        let x1 = sum - A[z] * itemsh[z];
-        let y1 = W - ks[i];
-        let x2 = sum;
-        let y2 = W - ks[i] + b[i] * itemsw[z];
-
-        this.locations.push([{x1, y1, x2, y2}]);
-
-        this.constituentsx.push(A);
-        this.constituentsy.push(B);
-
-        for (let i = 0; i < this.pattern.length; i++) {
-            this.pattern[i] += A[i] * B[i];
-        }
-
-        this.patternIsRotated.push(true);
-    }
-
-    cuttingLocation (a, b, itemsw, itemsh) {
-        return a.map((el, idx) => {
-            var x1, y1, x2, y2;
-
-            if (el > 0) {
-                let sum = 0;
-                for (let i = 0; i <= idx; i++) {
-                    sum += a[i] * itemsh[i];
-                }
-
-                x1 = sum - el * itemsh[idx];
-                x2 = sum;
-                y1 = 0;
-                y2 = b[idx] * itemsw[idx];
-
-                return {x1, y1, x2, y2};
-            }
-
-            return null;
-        });
-    }
-
+    // For instance:
+    // map: [4, 5, 3, 0, 1, 2], reverseMap: [3, 4, 5, 2, 0, 1]
+    // original pattern: [0, 1, 2, 3, 4, 5], sorted pattern: [4, 5, 3, 0, 1, 2]
+    // expected remapped: [0, 1, 2, 3, 4 , 5]
     remap (map) {
         var reverseMap = createReverseMap(map);
 
-        return {
-            pattern: remap(this.pattern, reverseMap),
-            constituentsx: this.constituentsx.map(cx => remap(cx, reverseMap)),
-            constituentsy: this.constituentsy.map(cy => remap(cy, reverseMap)),
-            locations: this.locations.map(location => remap(location, reverseMap)),
-            patternIsRotated: this.patternIsRotated
-        };
+        this.pattern = remap(this.pattern, reverseMap);
+        this.constituentsx = this.constituentsx.map(cx => remap(cx, reverseMap));
+        this.constituentsy = this.constituentsy.map(cy => remap(cy, reverseMap));
+        this.locations = this.locations.map(location => remap(location, reverseMap));
+        this.patternIsRotated = remap(this.patternIsRotated, reverseMap);
 
-        function remap (arr, map) {
+        return this;
+
+        function remap (arr, rmap) {
             return arr && arr.map((_, idx) => {
-                return arr[map[idx]];
+                return arr[rmap[idx]];
             });
         }
+    }
+
+    getMaxY () {
+        var max = Math.max(...this.locations.map(arr => Math.max(...arr.map(loc => loc ? loc.y2 : 0))));
+        return max < -1e15 ? 0 : max;
+    }
+
+    getMinY () {
+        var min = Math.min(...this.locations.map(arr => Math.min(...arr.map(loc => loc ? loc.y1 : 1e20))));
+        return min > 1e15 ? 0 : min;
+    }
+
+    getMaxX () {
+        var max = Math.max(...this.locations.map(arr => Math.max(...arr.map(loc => loc ? loc.x2 : 0))));
+        return max < -1e15 ? 0 : max;
+    }
+
+    getMinX () {
+        var min = Math.min(...this.locations.map(arr => Math.min(...arr.map(loc => loc ? loc.x1 : 1e20))));
+        return min > 1e15 ? 0 : min;
+    }
+
+    fits () {
+        return this.getMaxX() <= this.W && this.getMaxY() <= this.L;
+    }
+
+    area () {
+        return this.locations.reduce((acc, loc) => {
+            return acc + loc.reduce((acc, l) => {
+                return acc + (l ? (l.x2 - l.x1) * (l.y2 - l.y1) : 0);
+            }, 0);
+        }, 0);
     }
 }

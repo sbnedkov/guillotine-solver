@@ -1,205 +1,314 @@
 import CuttingPattern from '../cutting-pattern';
+import cuttingUtilsService from '../cutting-utils';
+import PatternDrainer from '../pattern-drainer';
+import {unique} from '../utils';
 
 export default class SolverBnB {
-    constructor (stocksw, stocksh, itemsw, itemsh, demands) {
+    constructor (W, L, itemsw, itemsh, allowRotation, cutType) {
         var itemdata = itemsw.map((el, idx) => {
             return {
                 w: el,
                 h: itemsh[idx],
-                d: demands[idx],
+                canRotate: allowRotation[idx],
                 idx: idx
             };
         });
+
+        this.cuttingUtils = cuttingUtilsService(cutType);
+
         this.sorted = itemdata.sort((a1, a2) => {
-            return a2.h - a1.h;
+            return this.cuttingUtils.sortPredicate(a1, a2, W, L);
         });
 
         this.itemsw = this.sorted.map(el => el.w);
         this.itemsh = this.sorted.map(el => el.h);
-        this.demands = this.sorted.map(el => el.d);
         this.map = this.sorted.map(el => el.idx);
+        this.canRotate = this.sorted.map(el => el.canRotate);
 
-        // TODO: multiple stock sizes
-        this.W = stocksw[0];
-        this.L = stocksh[0];
+//        console.log(this.sorted);
+//        console.log(this.map);
+
+        this.W = W;
+        this.L = L;
+
+        this.memory = {};
     }
 
-    solve () {
-        var m = this.itemsw.length;
-        var as = [];
-        var bs = [];
-        var patterns = [];
-        var losses = [];
+    solve (demands) {
+        this.demands = demands.map((_, idx) => demands[this.map[idx]]);
 
-        var j = 0;
-        var r = 0;
+        // Hack to be like Optimik
+        this.minHeight = this.cuttingUtils.minHeight(this.itemsh);
+        this.minWidth = this.cuttingUtils.minWidth(this.itemsw);
 
-        var a = this.itemsw.map(() => 0);
-        var b = this.itemsw.map(() => 0);
-        as.push(a);
-        bs.push(b);
+        this.patternMemory = {};
+        var hashStr = this.hash(this.demands);
+        if (this.memory[hashStr]) {
+            return this.memory[hashStr];
+        }
 
-        var As = [];
-        var Bs = [];
+        this.patterns = [];
 
-        this.sorted.forEach((_, idx) => {
-            var sum = 0;
-            for (let i = 0; i < idx; i++) {
-                sum += a[i] * this.itemsh[i];
-            }
-            var quotient = (this.L - sum) / this.itemsh[idx];
-
-            a[idx] = Math.min(Math.floor(quotient), this.demands[idx]); // (1)
-            b[idx] = Math.min(a[idx] > 0 ? Math.floor(this.W / this.itemsw[idx]) : 0, Math.floor(this.demands[idx] / a[idx])); // (2)
+        this.dfs(this.demands, pattern => {
+            this.patterns.push(pattern);
         });
 
-        var pattern = new CuttingPattern(a, b, this.itemsw, this.itemsh);
-        patterns.push(pattern);
+        var uniquePatterns = unique(this.patterns, pattern => this.patternSignature(pattern.constituentsx, pattern.constituentsy));
+        var drainedPatterns = [];
 
-        var {Cu, Cv} = this.cuttingLoss(As, Bs, as, bs, pattern, j);
-        losses.push(Cu + Cv);
-
-        r = m - 1;
-
-//        console.log(pattern);
-
-        mainloop:
-        while (r >= 0) {
-            while (as[j][r] > 0) {
-//                console.log('>>>>>>>>>>>>>...', r, as[j], bs[j]);
-                let flag = as[j][r] >= bs[j][r];
-                j = j + 1;
-
-                let a = this.itemsw.map(() => 0);
-                let b = this.itemsw.map(() => 0);
-
-                as.push(a);
-                bs.push(b);
-
-                for (let z = 0; z < r; z++) {
-                    a[z] = as[j - 1][z];
-                    b[z] = bs[j - 1][z];
+        uniquePatterns.forEach(pattern => {
+            drainedPatterns.push(pattern);
+            this.drainPattern(pattern, p => {
+                var signature = this.patternSignature(p.constituentsx, p.constituentsy);
+                if (!this.patternMemory[signature]) {
+                    drainedPatterns.push(p);
+                    this.patternMemory[signature] = true;
                 }
-//                console.log(a, b);
+            });
+        });
 
-                let z = r;
-                if (flag) {
-                    a[z] = as[j - 1][z] - 1;
-                    b[z] = a[z] > 0 ? Math.floor(this.W / this.itemsw[z]) : 0;
-                } else {
-                    a[z] = as[j - 1][z];
-                    b[z] = bs[j - 1][z] - 1;
-                }
-//                console.log(a, b);
+        var mappedPatterns = drainedPatterns.map(activity => activity.remap(this.map));
 
-                for (let z = r + 1; z < m; z++) {
-                    var sum = 0;
-                    for (let i = 0; i < z + 1; i++) {
-                        sum += a[i] * this.itemsh[i];
-                    }
-                    var quotient = (this.L - sum) / this.itemsh[z];
+        var fittingPatterns = this.filterNotFitting(mappedPatterns);
 
-                    a[z] = Math.min(Math.floor(quotient), this.demands[z]); // (1)
-                    b[z] = Math.min(a[z] > 0 ? Math.floor(this.W / this.itemsw[z]) : 0, Math.floor(this.demands[z] / a[z])); // (2)
-//                    console.log('???', z, sum, quotient, a[z], b[z]);
-                }
+        this.memory[hashStr] = fittingPatterns;
+//        console.log(fittingPatterns);
 
-                let pattern = new CuttingPattern(a, b, this.itemsw, this.itemsh);
-                patterns.push(pattern);
-
-                let {Cu, Cv} = this.cuttingLoss(As, Bs, as, bs, pattern, j);
-                losses.push(Cu + Cv);
-//                console.log(a, b);
-
-
-//                console.log(pattern);
-
-                r = m - 1;
-                continue mainloop;
-            }
-            r = r - 1;
-        }
-
-        return {patterns, losses, map: this.map};
+        return this.memory[hashStr];
     }
 
-    cuttingLoss (As, Bs, as, bs, pattern, j) {
+    dfs (demands, cb) {
+//        process.stdout.write(demands + ' ');
         var m = this.itemsw.length;
+        var a = this.sorted.map(() => 0);
+        var b = this.sorted.map(() => 0);
 
-        var A = this.itemsw.map(() => 0);
-        var B = this.itemsw.map(() => 0);
-        As.push(A);
-        Bs.push(B);
+        var {p} = this.generatePattern(a, b, demands.slice(0), 0);
+        let fitPattern = this.makeFit(p, demands);
+        let remaining = this.calculateRemaining(fitPattern.pattern, demands);
 
-//        console.log(pattern);
+        let pattern = this.generatePatternPhase2And3(remaining, fitPattern);
 
-        // Cut loss along side length
+        if (pattern.nonNull) {
+            cb(pattern);
 
-        var remh = this.L - as[j].reduce((acc, curr, idx) => acc + curr * this.itemsh[idx], 0);
+            let as = [a];
+            let bs = [b];
+            let r = 0;
+            let j = 0;
 
-        var Cu = remh * this.W, Cv = 0;
-        for (let i = 0; i < m; i++) {
-            if (remh >= this.itemsw[i] && this.W >= this.itemsh[i]) { // If rotated fits
-                A[i] = Math.min(Math.floor(remh / this.itemsw[i]), this.demands[i]);
+            bnb:
+            while (r < m) {
+                while (as[j][r] > 0) {
+                    let flag = this.cuttingUtils.getBranchFlag(as[j][r], bs[j][r]);
+                    j = j + 1;
 
-                if (A[i] > 0) {
-                    B[i] = Math.min(Math.floor(this.W / this.itemsh[i]), Math.floor(this.demands[i] / A[i]));
+                    let a = this.itemsw.map(() => 0);
+                    let b = this.itemsw.map(() => 0);
 
-                    Cu = (remh - A[i] * this.itemsw[i]) * B[i] * this.itemsh[i];
-                    Cv = remh * (this.W - B[i] * this.itemsh[i]);
+                    for (let z = 0; z < r; z++) {
+                        a[z] = as[j - 1][z];
+                        b[z] = bs[j - 1][z];
+                    }
 
-                    pattern.add(A, B, i, as[j], this.itemsw, this.itemsh);
+                    let z = r;
+                    if (flag) {
+                        a[z] = as[j - 1][z] - 1;
+                        b[z] = a[z] && bs[j - 1][z];
+                    } else {
+                        b[z] = bs[j - 1][z] - 1;
+                        a[z] = b[z] && as[j - 1][z];
+                    }
 
-                    break;
+                    if (a[z] < 0 || b[z] < 0) {
+                        break bnb;
+                    }
+
+                    let {p, A, B} = this.generatePattern(a, b, demands.slice(0), r + 1);
+
+                    as.push(A);
+                    bs.push(B);
+
+                    let fitPattern = this.makeFit(p, demands);
+                    let remaining = this.calculateRemaining(fitPattern.pattern, demands);
+
+                    let pattern = this.generatePatternPhase2And3(remaining, fitPattern);
+
+                    if (pattern.nonNull) {
+                        cb(pattern);
+                    }
                 }
+                r = r + 1;
             }
         }
-//        console.log(Cu, Cv);
+    }
 
-        A = this.itemsw.map(() => 0);
-        B = this.itemsw.map(() => 0);
+    generatePattern (a, b, remaining, from) {
+        // Phase I
+        var initialMax;
+        var max = initialMax = this.cuttingUtils.phase1InitialMax(a, b, this.itemsw, this.itemsh, this.W, this.L);
+        for (let idx = from; idx < this.sorted.length; idx++) {
+            if (this.demands[idx] === 0) {
+                continue;
+            }
 
-        // Cut loss along side width
+            let w = this.itemsw[idx];
+            let h = this.itemsh[idx];
 
-        var ks = bs[j].map((b, idx) => b > 0 ? this.W - b * this.itemsw[idx] : 0);
+            if (!this.cuttingUtils.phase1Fits(w, h, max, this.W, this.L)) {
+                continue;
+            }
 
-        var cv = as[j].reduce((acc, curr, idx) => {
-            return acc + curr * this.itemsh[idx] * ks[idx];
-        }, 0);
-        var i = as[j].findIndex(a => a);
-        if (~i) {
-            var lz = as[j][i] * this.itemsh[i];
-            for (let z = 0; z < m; z++) {
-                if (z === i) {
+            let sum = 0;
+            for (let i = 0; i < idx; i++) {
+                sum += this.cuttingUtils.mainSideMultiplied(a[i], b[i], this.itemsw[i], this.itemsh[i]);
+            }
+//            console.log('idx = ', idx, 'sum = ', sum, a, b);
+            let quotient = (this.cuttingUtils.primarySide(this.W, this.L) - sum) / this.cuttingUtils.primarySide(w, h);
+
+            let {An, Bn} = this.cuttingUtils.phase1(quotient, remaining[idx]);
+//            console.log('An = ', An, 'Bn = ', Bn, 'remaining = ', remaining[idx]);
+            a[idx] += An;
+            b[idx] += Bn;
+
+            if (max === initialMax && An * Bn > 0) {
+                max = this.cuttingUtils.secondarySide(w, h);
+            }
+
+            this.subtractRemaining(remaining, idx, An * Bn);
+        }
+
+        var pattern = new CuttingPattern(a, b, this.itemsw, this.itemsh, this.cuttingUtils, this.W, this.L);
+
+        return {A: a, B: b, p: pattern};
+    }
+
+    generatePatternPhase2And3 (remaining, pattern) {
+        // Phase II
+        for (let i = 0; i < this.itemsw.length; i++) {
+            if (this.demands[i] === 0) {
+                continue;
+            }
+
+            if (!this.canRotate[i]) {
+                continue;
+            }
+
+            let w = this.itemsw[i];
+            let h = this.itemsh[i];
+            let pattw = pattern.getMaxX();
+            let patth = pattern.getMaxY();
+
+            let primarySideMax = this.cuttingUtils.primarySide(pattw, patth);
+            if (primarySideMax === 0) { // Bail if we had another option to place this in its primary direction
+                let primarySide = this.cuttingUtils.primarySide(w, h);
+                if (primarySide <= this.cuttingUtils.primarySide(this.W, this.L)) {
                     continue;
                 }
+            }
 
-                if (lz >= this.itemsh[z] && ks[i] >= this.itemsw[z]) {
-                    A[z] = Math.min(Math.floor(lz / this.itemsh[z]), this.demands[z]);
-                    if (A[z] > 0) {
-                        B[z] = Math.min(Math.floor(ks[i] / this.itemsw[z]), Math.floor(this.demands[z] / A[z]));
+            let {An, Bn} = this.cuttingUtils.phase2(w, h, pattw + this.minWidth, patth + this.minHeight, pattern, remaining[i], this.W, this.L);
+            if (An * Bn) {
+                pattern.addn(An, Bn, i, this.cuttingUtils.phase2X(pattw, pattern), this.cuttingUtils.phase2Y(patth, pattern), w, h, true);
+                this.subtractRemaining(remaining, i, An * Bn);
+            }
+        }
 
-                        Cu += (lz - A[z] * this.itemsh[z]) * B[z] * this.itemsw[z];
-                        Cv = lz * (ks[i] - B[z] * this.itemsh[z]);
-        //                console.log(lz, ks[z], B[z], this.itemsh[z], Cv);
-                        if (Cv < 0) {
-                            cv = 0;
-                            Cv = 0;
-                        }
+        // Phase III
+        pattern.locations[0] && pattern.locations[0].slice(0).forEach(loc => {
+            if (loc) {
+                let pattw = loc.x2 - loc.x1;
+                let patth = loc.y2 - loc.y1;
 
-                        pattern.addv(A, B, z, i, bs[j], ks, this.itemsw, this.itemsh, this.W);
+                for (let i = 0; i < this.itemsw.length; i++) {
+                    if (this.demands[i] === 0) {
+                        continue;
+                    }
 
+                    let w = this.itemsw[i];
+                    let h = this.itemsh[i];
+
+                    let {An, Bn} = this.cuttingUtils.phase3(w, h, pattw, patth, pattern, remaining[i]);
+                    if (An * Bn) {
+                        pattern.addn(An, Bn, i, this.cuttingUtils.phase3X(loc), this.cuttingUtils.phase3Y(loc), w, h);
+                        this.subtractRemaining(remaining, i, An * Bn);
                         break;
                     }
                 }
             }
-        }
-        if (!Cv) {
-            Cv = cv;
-        }
+        });
 
-//        console.log(as[j], bs[j], pattern);
-//        console.log(Cu, Cv);
-        return {Cu, Cv};
+        return pattern;
+    }
+
+    subtractRemaining (remaining, idx, q) {
+        remaining[idx] = Math.max(remaining[idx] - q, 0);
+    }
+
+    patternWorth (activity) {
+        var waste = this.cuttingUtils.lossPercent(activity, this.W, this.L) * this.cuttingUtils.stripArea(activity, this.W, this.L);
+
+        var usage = 1 - waste / (this.W * this.L);
+        var area = activity.area() / (this.W * this.L);
+
+        return usage * area;
+    }
+
+    makeFit (pattern, demands) {
+        var afit = demands.map(() => 0);
+        var bfit = afit.slice(0);
+
+        var A = this.reduce(pattern.constituentsx);
+        var B = this.reduce(pattern.constituentsy);
+//        console.log('before:', A, B);
+
+        afit.forEach((_, idx) => {
+            var {a, b} = this.cuttingUtils.fitConstituents(A[idx], B[idx], demands[idx]);
+            afit[idx] = a;
+            bfit[idx] = b;
+        });
+//        console.log('after:', afit, bfit, 'for', demands);
+
+        var pfit = new CuttingPattern(afit, bfit, this.itemsw, this.itemsh, this.cuttingUtils, this.W, this.L);
+
+        return pfit;
+    }
+
+    reduce (constituents) {
+        return constituents.reduce((acc, curr) => {
+            return acc.map((el, idx) => el + curr[idx]);
+        }, this.sorted.map(() => 0));
+    }
+
+    hash (arr) {
+        return arr.join(':');
+    }
+
+    filterNotFitting (patterns) {
+        return patterns.filter(pattern => pattern.fits());
+    }
+
+    calculateRemaining (pattern, demands) {
+        return demands.map((el, idx) => el - pattern[idx]);
+    }
+
+    patternSignature (constituentsx, constituentsy) {
+        return [constituentsx.map(c => c || c.join('-')), constituentsy.map(c => c || c.join('-'))].join(':');
+    }
+
+    drainPattern (pattern, cb) {
+//        console.log(pattern);
+        var drainer = new PatternDrainer(pattern, this.cuttingUtils);
+
+        var mainConstituent;
+        while ((mainConstituent = drainer.next())) {
+            var complement = drainer.complement(mainConstituent);
+            let p = this.cuttingUtils.newFromConstituents(mainConstituent, complement, this.itemsw, this.itemsh, this.W, this.L);
+
+            if (p.nonNull) { // Safety net
+                cb(p);
+                break;
+            }
+        }
     }
 }

@@ -69,8 +69,35 @@ export function createReverseMap (map) {
     return reverseMap;
 }
 
-export function flatten (arrOfArr) {
-    return arrOfArr.reduce((acc, arr) => {
-        return acc.concat(arr);
+export function flatten (arr) {
+    return arr.reduce((acc, el) => {
+        return acc.concat(el);
     }, []);
+}
+
+export function uniqueArr (arrOfArr, pred) {
+    var map = {};
+    if (!pred) {
+        pred = arr => arr.reduce((acc, a) => acc + a, '');
+    }
+    return arrOfArr.filter(arr => {
+        var hash = pred(arr);
+        if (map[hash]) {
+            return false;
+        }
+
+        return map[hash] = true;
+    });
+}
+
+export function unique (arr, pred) {
+    var map = {};
+    return arr.filter(el => {
+        var hash = pred(el);
+        if (map[hash]) {
+            return false;
+        }
+
+        return map[hash] = true;
+    });
 }
